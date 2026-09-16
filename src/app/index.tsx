@@ -1,19 +1,36 @@
 import { StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
-import { brand, colors, fontSize, letterSpacing, radius, spacing } from '@/constants/theme';
+import { BrandLockup } from '@/components/brand-lockup';
+import { Button } from '@/components/ui/button';
+import { Spinner } from '@/components/ui/spinner';
+import { colors, fontSize, spacing } from '@/constants/theme';
+import { useAuthStore } from '@/stores/auth-store';
 
-export default function SplashScreen() {
+export default function HomePlaceholderScreen() {
+  const { profile, loading, initialized, signOut } = useAuthStore();
+
+  if (!initialized || loading || (profile && profile.status !== 'approved')) {
+    return <Spinner fullscreen />;
+  }
+
   return (
     <SafeAreaView style={styles.safeArea}>
+      <BrandLockup compact />
       <View style={styles.center}>
-        <View style={styles.mark}>
-          <Text style={styles.markText}>ALI</Text>
-        </View>
-        <Text style={styles.brand}>{brand.name}</Text>
-        <Text style={styles.tagline}>{brand.tagline}</Text>
+        <Text style={styles.welcome}>Welcome, {profile?.full_name ?? 'Champion'}.</Text>
+        <Text style={styles.muted}>
+          Your membership is approved. Training, chat, and the home feed are being set up.
+        </Text>
       </View>
-      <Text style={styles.footer}>Member application</Text>
+      <Button
+        title="Sign out"
+        variant="ghost"
+        onPress={async () => {
+          await signOut();
+        }}
+        fullWidth
+      />
     </SafeAreaView>
   );
 }
@@ -22,52 +39,27 @@ const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: colors.background,
-    alignItems: 'center',
-    justifyContent: 'center',
     padding: spacing.lg,
+    justifyContent: 'space-between',
   },
   center: {
-    alignItems: 'center',
-    gap: spacing.md,
-  },
-  mark: {
-    width: 96,
-    height: 96,
-    borderRadius: radius.input,
-    backgroundColor: colors.primary,
+    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
-    shadowColor: colors.primary,
-    shadowOpacity: 0.4,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: 6 },
-    elevation: 8,
+    gap: spacing.md,
   },
-  markText: {
-    color: colors.text,
-    fontSize: 30,
-    fontWeight: '800',
-    letterSpacing: letterSpacing.heading,
-  },
-  brand: {
+  welcome: {
     color: colors.text,
     fontSize: fontSize.h1,
     fontWeight: '800',
-    letterSpacing: letterSpacing.heading,
-    textTransform: 'uppercase',
     textAlign: 'center',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
   },
-  tagline: {
+  muted: {
     color: colors.muted,
     fontSize: fontSize.body,
+    lineHeight: 22,
     textAlign: 'center',
-  },
-  footer: {
-    position: 'absolute',
-    bottom: spacing.xl,
-    color: colors.subtle,
-    fontSize: fontSize.caption,
-    letterSpacing: letterSpacing.button,
-    textTransform: 'uppercase',
   },
 });

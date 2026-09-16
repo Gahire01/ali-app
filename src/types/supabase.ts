@@ -143,45 +143,61 @@ export type FighterCard = {
 export type Database = {
   public: {
     Tables: {
-      profiles: { Row: Profile; Insert: Partial<Profile>; Update: Partial<Profile> }
+      profiles: {
+        Row: Profile
+        Insert: Partial<Profile>
+        Update: Partial<Profile>
+        Relationships: []
+      }
       training_sessions: {
         Row: TrainingSession
         Insert: Partial<TrainingSession>
         Update: Partial<TrainingSession>
+        Relationships: []
       }
-      attendance: { Row: Attendance; Insert: Partial<Attendance>; Update: Partial<Attendance> }
-      posts: { Row: Post; Insert: Partial<Post>; Update: Partial<Post> }
-      media: { Row: Media; Insert: Partial<Media>; Update: Partial<Media> }
-      likes: { Row: Like; Insert: Partial<Like>; Update: Partial<Like> }
+      attendance: {
+        Row: Attendance
+        Insert: Partial<Attendance>
+        Update: Partial<Attendance>
+        Relationships: []
+      }
+      posts: { Row: Post; Insert: Partial<Post>; Update: Partial<Post>; Relationships: [] }
+      media: { Row: Media; Insert: Partial<Media>; Update: Partial<Media>; Relationships: [] }
+      likes: { Row: Like; Insert: Partial<Like>; Update: Partial<Like>; Relationships: [] }
       announcements: {
         Row: Announcement
         Insert: Partial<Announcement>
         Update: Partial<Announcement>
+        Relationships: []
       }
       device_tokens: {
         Row: DeviceToken
         Insert: Partial<DeviceToken>
         Update: Partial<DeviceToken>
+        Relationships: []
       }
       conversations: {
         Row: Conversation
         Insert: Partial<Conversation>
         Update: Partial<Conversation>
+        Relationships: []
       }
       conversation_members: {
         Row: ConversationMember
         Insert: Partial<ConversationMember>
         Update: Partial<ConversationMember>
+        Relationships: []
       }
-      messages: { Row: Message; Insert: Partial<Message>; Update: Partial<Message> }
+      messages: { Row: Message; Insert: Partial<Message>; Update: Partial<Message>; Relationships: [] }
       fighter_cards: {
         Row: FighterCard
         Insert: Partial<FighterCard>
         Update: Partial<FighterCard>
+        Relationships: []
       }
     }
     Views: {
-      public_profiles: { Row: PublicProfile }
+      public_profiles: { Row: PublicProfile; Relationships: [] }
     }
     Functions: Record<string, never>
     Enums: Record<string, never>
