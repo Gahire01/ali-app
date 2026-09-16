@@ -1,0 +1,15 @@
+# Supabase CLI configuration for ALI Boxing Club.
+# Used by: supabase db push, supabase functions deploy, supabase start.
+
+project_id = "ali-boxing-club"
+
+# Edge Functions do their own authorization checks in code (the webhook has
+# no JWT, and the app calls on-approval / send-push with the user's token).
+[functions.on-new-user]
+verify_jwt = false
+
+[functions.on-approval]
+verify_jwt = false
+
+[functions.send-push]
+verify_jwt = false
