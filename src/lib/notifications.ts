@@ -2,6 +2,7 @@ import { Platform } from 'react-native';
 import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
 
+import { isPreviewMock } from '@/lib/env';
 import { supabase } from '@/lib/supabase';
 
 Notifications.setNotificationHandler({
@@ -36,7 +37,7 @@ export async function ensurePushPermission(): Promise<boolean> {
  * Upserts into device_tokens (RLS: users may only write their own row).
  */
 export async function registerDeviceToken(): Promise<boolean> {
-  if (Platform.OS === 'web') return false;
+  if (Platform.OS === 'web' || isPreviewMock) return true; // preview: no real token needed
 
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) return false;

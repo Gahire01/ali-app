@@ -3,6 +3,8 @@ import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
+import '@/lib/sentry';
+
 import { colors } from '@/constants/theme';
 import { useProtectedRoute } from '@/hooks/use-protected-route';
 import { useRegisterPushToken } from '@/hooks/use-register-push-token';

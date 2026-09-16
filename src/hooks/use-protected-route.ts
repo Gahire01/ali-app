@@ -21,7 +21,7 @@ export function useProtectedRoute() {
     if (!navState?.key) return;
 
     const segs = segments as readonly string[];
-    const segment = segs[0] ?? '';
+    const segment: string = segs[0] ?? '';
     const isDeepLinkHandler = segment === 'auth' && (segs[1] === 'callback' || segs[1] === 'reset');
 
     if (!user) {
@@ -43,8 +43,8 @@ export function useProtectedRoute() {
     }
 
     // Approved member.
-    if (segment === '(auth)' || segment === '') {
-      router.replace('/');
+    if (segment === '(auth)' || segment !== '(tabs)') {
+      router.replace('/(tabs)/home');
     }
   }, [initialized, user, profile, segments, navState, router]);
 }

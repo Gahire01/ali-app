@@ -3,6 +3,7 @@ import * as WebBrowser from 'expo-web-browser';
 import { Platform } from 'react-native';
 
 import { brand } from '@/constants/theme';
+import { isPreviewMock } from '@/lib/env';
 import { supabase } from '@/lib/supabase';
 
 WebBrowser.maybeCompleteAuthSession();
@@ -23,6 +24,11 @@ export type SocialAuthResult =
  */
 export async function signInWithGoogle(): Promise<SocialAuthResult> {
   try {
+    if (isPreviewMock) {
+      await supabase.auth.signInWithOAuth({ provider: 'google', options: {} });
+      return { ok: true, canceled: false };
+    }
+
     if (Platform.OS === 'web') {
       const { error } = await supabase.auth.signInWithOAuth({
         provider: 'google',

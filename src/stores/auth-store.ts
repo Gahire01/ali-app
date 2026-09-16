@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { type Session, type User } from '@supabase/supabase-js';
 
 import { supabase } from '@/lib/supabase';
+import { getProfile } from '@/lib/data';
 import type { Profile } from '@/types/supabase';
 
 type AuthState = {
@@ -59,12 +60,7 @@ export const useAuthStore = create<AuthState & AuthActions>((set, get) => ({
 
   fetchProfile: async (userId: string) => {
     try {
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', userId)
-        .maybeSingle();
-      if (error) throw error;
+      const data = await getProfile(userId);
       set({ profile: data });
       return data;
     } catch (err) {
