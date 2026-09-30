@@ -1,61 +1,55 @@
-const MINUTE = 60_000;
-const HOUR = 60 * MINUTE;
-const DAY = 24 * HOUR;
+/**
+ * Small date/time formatters used across the app. All output is
+ * English-language and human-readable — no ISO strings leak to the UI.
+ */
 
-export function formatRelativeTime(iso: string | null | undefined): string {
-  if (!iso) return '';
-  const then = new Date(iso).getTime();
-  const diff = Date.now() - then;
-  if (diff < MINUTE) return 'just now';
-  if (diff < HOUR) return `${Math.floor(diff / MINUTE)}m ago`;
-  if (diff < DAY) return `${Math.floor(diff / HOUR)}h ago`;
-  if (diff < 7 * DAY) return `${Math.floor(diff / DAY)}d ago`;
-  return new Date(iso).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+function safeDate(input: string | number | Date | null | undefined): Date | null {
+  if (input === null || input === undefined) return null;
+  const d = new Date(input);
+  return Number.isNaN(d.getTime()) ? null : d;
 }
 
-export function formatDate(iso: string | null | undefined): string {
-  if (!iso) return '—';
-  return new Date(iso).toLocaleDateString('en-GB', {
-    weekday: 'short',
-    day: 'numeric',
-    month: 'short',
-  });
+/** "18:00" */
+export function formatTime(input: string | number | Date): string {
+  const d = safeDate(input);
+  if (!d) return '—';
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  return `${hh}:${mm}`;
 }
 
-export function formatDateTime(iso: string | null | undefined): string {
-  if (!iso) return '—';
-  return new Date(iso).toLocaleString('en-GB', {
-    weekday: 'short',
-    day: 'numeric',
-    month: 'short',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+/** "Mon, 20 Sep · 18:00" */
+export function formatDayTime(input: string | number | Date): string {
+  const d = safeDate(input);
+  if (!d) return '—';
+  const day = d.toLocaleDateString(undefined, { weekday: 'short' });
+  const date = d.getDate();
+  const month = d.toLocaleDateString(undefined, { month: 'short' });
+  return `${day}, ${date} ${month} · ${formatTime(d)}`;
 }
 
-export function formatDayTime(iso: string | null | undefined): string {
-  if (!iso) return '—';
-  return new Date(iso).toLocaleString('en-GB', {
-    weekday: 'short',
-    day: 'numeric',
-    month: 'short',
-  });
+/** "20 Sep 2026 · 18:00" */
+export function formatDateTime(input: string | number | Date): string {
+  const d = safeDate(input);
+  if (!d) return '—';
+  const date = d.getDate();
+  const month = d.toLocaleDateString(undefined, { month: 'short' });
+  const year = d.getFullYear();
+  return `${date} ${month} ${year} · ${formatTime(d)}`;
 }
 
-export function formatClock(iso: string | null | undefined): string {
-  if (!iso) return '—';
-  return new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-}
-
-export function formatTime(iso: string | null | undefined): string {
-  if (!iso) return '—';
-  return new Date(iso).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-}
-
-/** Attendance percentage for a set of records, ignoring pending entries. */
-export function attendancePct(records: { status: string }[]): number | null {
-  const settled = records.filter((r) => r.status !== 'pending');
-  if (settled.length === 0) return null;
-  const present = settled.filter((r) => r.status === 'present' || r.status === 'late').length;
-  return Math.round((present / settled.length) * 100);
+/** "just now" / "5m ago" / "3h ago" / "2d ago" / "20 Sep" */
+export function formatRelativeTime(input: string | number | Date): string {
+  const d = safeDate(input);
+  if (!d) return '—';
+  const diff = Date.now() - d.getTime();
+  const sec = Math.floor(diff / 1000);
+  if (sec < 45) return 'just now';
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min}m ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr}h ago`;
+  const day = Math.floor(hr / 24);
+  if (day < 7) return `${day}d ago`;
+  return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
 }

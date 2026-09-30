@@ -8,7 +8,7 @@ import {
   View,
 } from 'react-native';
 import { useFocusEffect, useRouter } from 'expo-router';
-import { Feather } from 'lucide-react-native';
+import { Newspaper, Plus } from 'lucide-react-native';
 
 import { ErrorState } from '@/components/ui/error-state';
 import { EmptyState } from '@/components/ui/empty-state';
@@ -23,18 +23,24 @@ import { subscribeToBus } from '@/lib/mock';
 import { isPreviewMock } from '@/lib/env';
 import { describeError } from '@/lib/errors';
 import { supabase } from '@/lib/supabase';
+import { withTimeout } from '@/lib/with-timeout';
 
 const PAGE_SIZE = 12;
+const LOAD_TIMEOUT = 8000;
 
 export default function HomeFeedScreen() {
   const user = useAuthStore((s) => s.user);
   const profile = useAuthStore((s) => s.profile);
+  const initialized = useAuthStore(
+    (s) => (s as unknown as { initialized?: boolean }).initialized ?? true,
+  );
   const router = useRouter();
   const userId = user?.id ?? '';
   const staff = Boolean(profile && isStaff(profile.role));
 
   const [posts, setPosts] = useState<FeedPost[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
@@ -43,23 +49,35 @@ export default function HomeFeedScreen() {
   const mountedRef = useRef(true);
 
   const loadPage = useCallback(
-    async (reset = false) => {
-      if (!userId) return;
-      if (!reset && !hasMoreRef.current) return;
-      if (reset) {
+    async (mode: 'initial' | 'refresh' | 'more' = 'initial') => {
+      if (!userId) {
+        setLoading(false);
+        setRefreshing(false);
+        setLoadingMore(false);
+        return;
+      }
+      if (mode === 'more' && !hasMoreRef.current) return;
+
+      if (mode === 'initial') {
         offsetRef.current = 0;
         hasMoreRef.current = true;
+        setLoading(true);
+      } else if (mode === 'refresh') {
+        offsetRef.current = 0;
+        hasMoreRef.current = true;
+        setRefreshing(true);
       } else {
         setLoadingMore(true);
       }
+
       try {
-        const page = await feed.list(userId, offsetRef.current, PAGE_SIZE);
+        const page = await withTimeout(
+          feed.list(userId, offsetRef.current, PAGE_SIZE),
+          LOAD_TIMEOUT,
+          'Loading feed',
+        );
         if (!mountedRef.current) return;
-        if (reset) {
-          setPosts(page);
-        } else {
-          setPosts((prev) => [...prev, ...page]);
-        }
+        setPosts((prev) => (mode === 'more' ? [...prev, ...page] : page));
         hasMoreRef.current = page.length === PAGE_SIZE;
         offsetRef.current += PAGE_SIZE;
         setError(null);
@@ -69,29 +87,39 @@ export default function HomeFeedScreen() {
       } finally {
         if (mountedRef.current) {
           setLoading(false);
+          setRefreshing(false);
           setLoadingMore(false);
         }
       }
     },
-    [userId]
+    [userId],
   );
+
+  useEffect(() => {
+    if (!initialized) return;
+    if (!userId) {
+      setLoading(false);
+      return;
+    }
+    void loadPage('initial');
+  }, [initialized, userId, loadPage]);
 
   useFocusEffect(
     useCallback(() => {
       mountedRef.current = true;
-      void loadPage(true);
+      if (userId) void loadPage('initial');
       return () => {
         mountedRef.current = false;
       };
-    }, [loadPage])
+    }, [loadPage, userId]),
   );
 
   useEffect(() => {
-    if (!isPreviewMock) {
+    if (!isPreviewMock && userId) {
       const channel = supabase
         .channel('feed-list')
         .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'posts' }, () => {
-          void loadPage(true);
+          void loadPage('refresh');
         })
         .subscribe();
       return () => {
@@ -99,13 +127,13 @@ export default function HomeFeedScreen() {
       };
     }
     const unsub = subscribeToBus('feed', 'reload', (() => {
-      void loadPage(true);
+      if (userId) void loadPage('refresh');
     }) as never);
     return unsub;
-  }, [loadPage]);
+  }, [loadPage, userId]);
 
   const toggleLike = useCallback(
-    async (postId: string, currentlyLiked: boolean) => {
+    async (postId: string, _currentlyLiked: boolean) => {
       if (!userId) return;
       try {
         await feed.toggleLike(postId, userId);
@@ -113,19 +141,19 @@ export default function HomeFeedScreen() {
         setToast({ type: 'error', message: describeError(err) });
       }
     },
-    [userId]
+    [userId],
   );
 
-  const renderSkeleton = () => (
-    <View style={styles.list}>
-      <SkeletonCard />
-      <SkeletonCard />
-    </View>
-  );
+  const retry = () => {
+    setError(null);
+    void loadPage('initial');
+  };
 
   return (
     <View style={styles.container}>
-      {toast && <Toast message={toast.message} type={toast.type} onDismiss={() => setToast(null)} />}
+      {toast && (
+        <Toast message={toast.message} type={toast.type} onDismiss={() => setToast(null)} />
+      )}
 
       <ScreenHeader
         title="Feed"
@@ -139,22 +167,37 @@ export default function HomeFeedScreen() {
               accessibilityLabel="Create new post"
               hitSlop={8}
             >
-              <Feather size={18} color={colors.text} />
+              <Plus size={22} color={colors.text} strokeWidth={3} />
             </Pressable>
           ) : undefined
         }
       />
 
-      {loading ? (
-        renderSkeleton()
+      {loading && posts.length === 0 ? (
+        <View style={styles.list}>
+          <SkeletonCard />
+          <SkeletonCard />
+        </View>
       ) : error ? (
-        <ErrorState message={error} onRetry={() => { setLoading(true); void loadPage(true); }} retryLoading={loading} />
+        <ErrorState message={error} onRetry={retry} retryLoading={loading} />
       ) : posts.length === 0 ? (
-        <EmptyState
-          icon={Feather}
-          title="No posts yet"
-          message="When coaches or admins share updates, they'll appear here."
-        />
+        // Staff see a "create" prompt with the + icon.
+        // Everyone else sees a neutral newspaper icon — they can't post.
+        staff ? (
+          <EmptyState
+            icon={Plus}
+            title="No posts yet"
+            message="Tap the + button above to share the first update."
+            actionLabel="Create post"
+            onAction={() => router.push('/(tabs)/home/create')}
+          />
+        ) : (
+          <EmptyState
+            icon={Newspaper}
+            title="No posts yet"
+            message="When coaches share updates, they'll appear here."
+          />
+        )
       ) : (
         <FlatList
           data={posts}
@@ -165,11 +208,11 @@ export default function HomeFeedScreen() {
           refreshControl={
             <RefreshControl
               tintColor={colors.muted}
-              refreshing={false}
-              onRefresh={() => void loadPage(true)}
+              refreshing={refreshing}
+              onRefresh={() => void loadPage('refresh')}
             />
           }
-          onEndReached={() => void loadPage(false)}
+          onEndReached={() => void loadPage('more')}
           onEndReachedThreshold={0.4}
           ListFooterComponent={
             loadingMore ? (
@@ -188,28 +231,18 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
   list: {
     paddingHorizontal: spacing.md,
-    paddingBottom: spacing.xxl,
+    paddingBottom: 140,
     gap: spacing.md,
   },
   composeBtn: {
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: colors.panel,
-    borderWidth: 1,
-    borderColor: colors.border,
+    backgroundColor: colors.primary,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  composeBtnPressed: {
-    opacity: 0.7,
-  },
-  footer: {
-    paddingVertical: spacing.lg,
-    alignItems: 'center',
-  },
-  footerText: {
-    color: colors.muted,
-    fontSize: fontSize.caption,
-  },
+  composeBtnPressed: { opacity: 0.8, transform: [{ scale: 0.97 }] },
+  footer: { paddingVertical: spacing.lg, alignItems: 'center' },
+  footerText: { color: colors.muted, fontSize: fontSize.caption },
 });

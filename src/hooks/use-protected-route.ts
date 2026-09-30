@@ -4,47 +4,32 @@ import { useEffect } from 'react';
 import { useAuthStore } from '@/stores/auth-store';
 
 /**
- * Redirects based on auth state:
- *   no user                       → (auth)/login
- *   callback/reset deep links     → stay (public handlers)
- *   user, not approved            → (auth)/pending
- *   user, approved                → / (member area)
+ * Simple routing guard. No approval gate, no pending screen.
+ * Signed out → login. Signed in → the app.
  */
 export function useProtectedRoute() {
-  const { initialized, user, profile } = useAuthStore();
-  const segments = useSegments();
   const router = useRouter();
-  const navState = useRootNavigationState();
+  const segments = useSegments();
+  const navigationState = useRootNavigationState();
+  const initialized = useAuthStore(
+    (s) => (s as unknown as { initialized?: boolean }).initialized,
+  );
+  const user = useAuthStore((s) => s.user);
 
   useEffect(() => {
+    if (!navigationState?.key) return;
     if (!initialized) return;
-    if (!navState?.key) return;
 
-    const segs = segments as readonly string[];
-    const segment: string = segs[0] ?? '';
-    const isDeepLinkHandler = segment === 'auth' && (segs[1] === 'callback' || segs[1] === 'reset');
+    const inAuthGroup = segments[0] === '(auth)';
+    const inOnboarding = segments[0] === '(onboarding)';
 
-    if (!user) {
-      if (isDeepLinkHandler) return;
-      if (segment !== '(auth)') {
-        router.replace('/(auth)/login');
-      }
+    if (!user && !inAuthGroup && !inOnboarding) {
+      router.replace('/(auth)/login');
       return;
     }
 
-    // Signed in.
-    if (profile === null) return; // profile still loading
-
-    if (profile.status !== 'approved') {
-      if (segment !== '(auth)' || segs[1] !== 'pending') {
-        router.replace('/(auth)/pending');
-      }
-      return;
-    }
-
-    // Approved member.
-    if (segment === '(auth)' || segment !== '(tabs)') {
+    if (user && inAuthGroup) {
       router.replace('/(tabs)/home');
     }
-  }, [initialized, user, profile, segments, navState, router]);
+  }, [user, segments, navigationState?.key, initialized, router]);
 }
