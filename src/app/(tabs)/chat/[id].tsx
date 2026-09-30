@@ -1,6 +1,9 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
+  Animated,
+  Easing,
   FlatList,
+  Keyboard,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -39,6 +42,13 @@ export default function ConversationScreen() {
   const flatListRef = useRef<FlatList>(null);
   const limitRef = useRef(50);
 
+  // Send button animation
+  const sendScale = useRef(new Animated.Value(1)).current;
+  const sendRotate = useRef(new Animated.Value(0)).current;
+
+  // Shake animation for input on send error
+  const inputShake = useRef(new Animated.Value(0)).current;
+
   const load = useCallback(async () => {
     if (!id) return;
     setLoading(true);
@@ -56,13 +66,17 @@ export default function ConversationScreen() {
   useFocusEffect(
     useCallback(() => {
       void load();
-    }, [load])
+    }, [load]),
   );
 
   useEffect(() => {
     if (!id) return;
     const unsub = chat.subscribe(id, (msg) => {
-      setMessages((prev) => [...prev, msg]);
+      setMessages((prev) => {
+        // Avoid duplicates (optimistic insert may already have this id)
+        if (prev.some((m) => m.id === msg.id)) return prev;
+        return [...prev, msg];
+      });
       if (userId) void chat.markRead(id, userId);
     });
     return unsub;
@@ -72,24 +86,91 @@ export default function ConversationScreen() {
     if (userId && id) void chat.markRead(id, userId);
   }, [id, userId, messages.length]);
 
+  // Auto-scroll to bottom when a new message arrives
   useEffect(() => {
     if (messages.length > 0) {
-      setTimeout(() => flatListRef.current?.scrollToEnd({ animated: true }), 100);
+      const t = setTimeout(
+        () => flatListRef.current?.scrollToEnd({ animated: true }),
+        80,
+      );
+      return () => clearTimeout(t);
     }
   }, [messages.length]);
+
+  // Animate the send button when text goes from empty to non-empty
+  useEffect(() => {
+    Animated.timing(sendRotate, {
+      toValue: text.trim() ? 1 : 0,
+      duration: 250,
+      easing: Easing.out(Easing.cubic),
+      useNativeDriver: true,
+    }).start();
+  }, [text, sendRotate]);
+
+  const shakeInput = () => {
+    Animated.sequence([
+      Animated.timing(inputShake, { toValue: 1, duration: 60, useNativeDriver: true }),
+      Animated.timing(inputShake, { toValue: -1, duration: 60, useNativeDriver: true }),
+      Animated.timing(inputShake, { toValue: 0.6, duration: 60, useNativeDriver: true }),
+      Animated.timing(inputShake, { toValue: -0.6, duration: 60, useNativeDriver: true }),
+      Animated.timing(inputShake, { toValue: 0, duration: 60, useNativeDriver: true }),
+    ]).start();
+  };
+
+  const pressSend = () => {
+    Animated.sequence([
+      Animated.timing(sendScale, { toValue: 0.85, duration: 80, useNativeDriver: true }),
+      Animated.spring(sendScale, { toValue: 1, damping: 8, stiffness: 260, useNativeDriver: true }),
+    ]).start();
+  };
 
   const send = async () => {
     const body = text.trim();
     if (!body || !id || !userId || sending) return;
-    setSending(true);
+
+    pressSend();
+
+    // Optimistic insert
+    const tempId = `temp-${Date.now()}`;
+    const optimistic: Message = {
+      id: tempId,
+      conversation_id: id,
+      sender_id: userId,
+      body,
+      read_at: null,
+      created_at: new Date().toISOString(),
+    } as Message;
+
+    setMessages((prev) => [...prev, optimistic]);
     setText('');
+    Keyboard.dismiss();
+
+    setSending(true);
     try {
-      await chat.send(id, userId, body);
+      const real = await chat.send(id, userId, body);
+      // Replace the temp with the real row if the API returned it
+      if (real && typeof real === 'object' && 'id' in real) {
+        setMessages((prev) =>
+          prev.map((m) => (m.id === tempId ? ({ ...m, ...real } as Message) : m)),
+        );
+      }
     } catch (err) {
+      // Roll back
+      setMessages((prev) => prev.filter((m) => m.id !== tempId));
       setText(body);
+      shakeInput();
       setToast({ type: 'error', message: describeError(err) });
     } finally {
       setSending(false);
+    }
+  };
+
+  // Web: send on Enter, new line on Shift+Enter
+  const onKeyPress = (e: { nativeEvent: { key: string; shiftKey?: boolean } }) => {
+    if (Platform.OS !== 'web') return;
+    if (e.nativeEvent.key === 'Enter' && !e.nativeEvent.shiftKey) {
+      e.preventDefault?.();
+      void send();
     }
   };
 
@@ -108,6 +189,18 @@ export default function ConversationScreen() {
       </View>
     );
   }
+
+  const canSend = text.trim().length > 0 && !sending;
+
+  const sendButtonRotate = sendRotate.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '360deg'],
+  });
+
+  const sendButtonBg = sendRotate.interpolate({
+    inputRange: [0, 1],
+    outputRange: [colors.panel, colors.primary],
+  });
 
   return (
     <View style={styles.container}>
@@ -134,17 +227,45 @@ export default function ConversationScreen() {
         </View>
       </View>
 
-      <KeyboardAvoidingView style={styles.flex} behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={0}>
+      <KeyboardAvoidingView
+        style={styles.flex}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+        keyboardVerticalOffset={0}
+      >
         <FlatList
           ref={flatListRef}
           data={messages}
           keyExtractor={(item) => item.id}
-          renderItem={({ item }) => <ChatBubble message={item} />}
+          renderItem={({ item, index }) => (
+            <ChatBubble
+              message={item}
+              isLatestOwn={index === messages.length - 1 && item.sender_id === userId}
+            />
+          )}
           contentContainerStyle={styles.list}
           contentInsetAdjustmentBehavior="automatic"
+          keyboardShouldPersistTaps="handled"
+          onContentSizeChange={() => {
+            // Keep pinned to the bottom as content grows
+            flatListRef.current?.scrollToEnd({ animated: false });
+          }}
         />
 
-        <View style={styles.inputBar}>
+        <Animated.View
+          style={[
+            styles.inputBar,
+            {
+              transform: [
+                {
+                  translateX: inputShake.interpolate({
+                    inputRange: [-1, 0, 1],
+                    outputRange: [-8, 0, 8],
+                  }),
+                },
+              ],
+            },
+          ]}
+        >
           <TextInput
             style={styles.input}
             value={text}
@@ -153,17 +274,34 @@ export default function ConversationScreen() {
             placeholderTextColor={colors.subtle}
             multiline
             maxLength={2000}
+            onKeyPress={onKeyPress}
+            blurOnSubmit={false}
+            returnKeyType="send"
+            onSubmitEditing={() => void send()}
           />
-          <Pressable
-            onPress={send}
-            disabled={!text.trim() || sending}
-            style={({ pressed }) => [styles.sendBtn, (!text.trim() || sending) && styles.sendBtnDisabled, pressed && styles.sendBtnPressed]}
-            accessibilityLabel="Send message"
-            hitSlop={8}
-          >
-            <Send size={18} color={colors.text} />
-          </Pressable>
-        </View>
+
+          <Animated.View style={{ transform: [{ scale: sendScale }] }}>
+            <Pressable
+              onPress={send}
+              disabled={!canSend}
+              style={styles.sendBtnWrap}
+              accessibilityLabel="Send message"
+              hitSlop={8}
+            >
+              <Animated.View
+                style={[
+                  styles.sendBtn,
+                  { backgroundColor: sendButtonBg },
+                  !canSend && styles.sendBtnDisabled,
+                ]}
+              >
+                <Animated.View style={{ transform: [{ rotate: sendButtonRotate }] }}>
+                  <Send size={18} color={colors.text} />
+                </Animated.View>
+              </Animated.View>
+            </Pressable>
+          </Animated.View>
+        </Animated.View>
       </KeyboardAvoidingView>
     </View>
   );
@@ -228,15 +366,15 @@ const styles = StyleSheet.create({
     color: colors.text,
     fontSize: fontSize.body,
     maxHeight: 100,
+    minHeight: 44,
   },
+  sendBtnWrap: { alignItems: 'center', justifyContent: 'center' },
   sendBtn: {
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: colors.primary,
     alignItems: 'center',
     justifyContent: 'center',
   },
   sendBtnDisabled: { opacity: 0.4 },
-  sendBtnPressed: { opacity: 0.8 },
 });

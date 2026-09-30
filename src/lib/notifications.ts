@@ -1,79 +1,88 @@
-import { Platform } from 'react-native';
-import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
+import { Platform } from 'react-native';
 
-import { isPreviewMock } from '@/lib/env';
 import { supabase } from '@/lib/supabase';
 
 Notifications.setNotificationHandler({
   handleNotification: async () => ({
     shouldShowAlert: true,
-    shouldShowBanner: true,
-    shouldShowList: true,
     shouldPlaySound: true,
     shouldSetBadge: false,
   }),
 });
 
-async function getPushToken(): Promise<string | null> {
-  if (!Device.isDevice) return null;
+export async function registerForPush(userId: string): Promise<string | null> {
+  try {
+    if (Platform.OS === 'web') return null;
 
-  const existing = await Notifications.getExpoPushTokenAsync().catch(() => null);
-  return existing?.data ?? null;
+    const perm = await Notifications.getPermissionsAsync();
+    let status = perm.status;
+    if (status !== 'granted') {
+      const ask = await Notifications.requestPermissionsAsync();
+      status = ask.status;
+    }
+    if (status !== 'granted') return null;
+
+    if (Platform.OS === 'android') {
+      await Notifications.setNotificationChannelAsync('default', {
+        name: 'General',
+        importance: Notifications.AndroidImportance.HIGH,
+      });
+      await Notifications.setNotificationChannelAsync('chat', {
+        name: 'Chat',
+        importance: Notifications.AndroidImportance.HIGH,
+        lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+      });
+      await Notifications.setNotificationChannelAsync('announcements', {
+        name: 'Announcements',
+        importance: Notifications.AndroidImportance.HIGH,
+      });
+    }
+
+    const token = (await Notifications.getExpoPushTokenAsync()).data;
+
+    await supabase
+      .from('device_tokens')
+      .upsert(
+        { user_id: userId, expo_push_token: token, updated_at: new Date().toISOString() },
+        { onConflict: 'user_id,expo_push_token' },
+      );
+
+    return token;
+  } catch {
+    return null;
+  }
 }
 
-export async function ensurePushPermission(): Promise<boolean> {
-  if (Platform.OS === 'web') return false;
-
-  const current = await Notifications.getPermissionsAsync();
-  if (current.granted) return true;
-
-  const requested = await Notifications.requestPermissionsAsync();
-  return requested.granted;
+export async function sendPushToUsers(
+  userIds: string[],
+  title: string,
+  body: string,
+  data: Record<string, unknown> = {},
+) {
+  if (userIds.length === 0) return;
+  try {
+    await supabase.functions.invoke('send-push', {
+      body: { userIds, title, body, data },
+    });
+  } catch {
+    // best-effort
+  }
 }
 
-/**
- * Register (or refresh) the device's Expo push token for the signed-in user.
- * Upserts into device_tokens (RLS: users may only write their own row).
- */
-export async function registerDeviceToken(): Promise<boolean> {
-  if (Platform.OS === 'web' || isPreviewMock) return true; // preview: no real token needed
-
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return false;
-
-  const granted = await ensurePushPermission();
-  if (!granted) return false;
-
-  const token = await getPushToken();
-  if (!token) return false;
-
-  const { error } = await supabase
-    .from('device_tokens')
-    .upsert(
-      { user_id: user.id, expo_push_token: token, updated_at: new Date().toISOString() },
-      { onConflict: 'user_id,expo_push_token' }
-    );
-
-  if (error) {
-    console.error('registerDeviceToken error', error);
+export function isMuted(): boolean {
+  try {
+    return localStorage?.getItem?.('ali_muted_notifications') === '1';
+  } catch {
     return false;
   }
-  return true;
 }
 
-export async function unregisterDeviceToken(): Promise<void> {
-  const { data: { user } } = await supabase.auth.getUser();
-  if (!user) return;
-
-  const token = await getPushToken();
-  if (!token) return;
-
-  const { error } = await supabase
-    .from('device_tokens')
-    .delete()
-    .eq('user_id', user.id)
-    .eq('expo_push_token', token);
-
-  if (error) console.error('unregisterDeviceToken error', error);
+export function setMuted(muted: boolean) {
+  try {
+    if (muted) localStorage?.setItem?.('ali_muted_notifications', '1');
+    else localStorage?.removeItem?.('ali_muted_notifications');
+  } catch {
+    // ignore
+  }
 }

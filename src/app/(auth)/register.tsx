@@ -40,28 +40,31 @@ export default function RegisterScreen() {
 
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
-  const [submitted, setSubmitted] = useState(false);
-  const [toast, setToast] = useState<{ message: string; type: 'error' } | null>(null);
+  const [toast, setToast] = useState<{ message: string; type: 'error' | 'success' } | null>(null);
 
   const validate = () => {
     const next: Record<string, string> = {};
+    if (!photo) next.photo = 'A profile photo is required.';
     if (fullName.trim().length < 2) next.fullName = 'Enter your full name.';
     if (!PHONE_RE.test(phone)) next.phone = 'Enter a valid phone number.';
     if (!EMAIL_RE.test(email)) next.email = 'Enter a valid email address.';
     if (password.length < 8) next.password = 'Password must be at least 8 characters.';
     if (isMinor) {
       if (guardianName.trim().length < 2) next.guardianName = 'Enter the parent or guardian name.';
-      if (!PHONE_RE.test(guardianPhone)) next.guardianPhone = 'Enter a valid guardian phone number.';
+      if (!PHONE_RE.test(guardianPhone)) next.guardianPhone = 'Enter a valid guardian phone.';
     }
-    if (!termsAccepted) next.terms = 'You must accept the terms to join.';
+    if (!termsAccepted) next.terms = 'Please accept the terms to continue.';
     setErrors(next);
     return Object.keys(next).length === 0;
   };
 
-  const handlePickPhoto = async () => {
+  const pickPhoto = async () => {
     try {
       const picked = await pickAndCompressImage({ allowsEditing: true, aspect: [1, 1] });
-      if (picked) setPhoto(picked);
+      if (picked) {
+        setPhoto(picked);
+        setErrors((prev) => ({ ...prev, photo: '' }));
+      }
     } catch (err) {
       setToast({ type: 'error', message: describeError(err) });
     }
@@ -71,20 +74,16 @@ export default function RegisterScreen() {
     const path = `avatars/${userId}.jpg`;
     const response = await fetch(image.uri);
     const arrayBuffer = await response.arrayBuffer();
-    const { error: uploadError } = await supabase.storage
+    const { error } = await supabase.storage
       .from('club-media')
-      .upload(path, arrayBuffer, {
-        contentType: 'image/jpeg',
-        upsert: true,
-      });
-    if (uploadError) throw uploadError;
-    return `avatars/${userId}.jpg`;
+      .upload(path, arrayBuffer, { contentType: 'image/jpeg', upsert: true });
+    if (error) throw error;
+    return path;
   };
 
   const handleSubmit = async () => {
     if (!validate() || submitting) return;
     setSubmitting(true);
-
     try {
       const { data, error } = await supabase.auth.signUp({
         email: email.trim().toLowerCase(),
@@ -101,18 +100,25 @@ export default function RegisterScreen() {
       });
 
       if (error) throw error;
-      if (!data.user) throw new Error('No account was created. Please try again.');
+      if (!data.user) throw new Error('Account was not created. Please try again.');
 
-      if (photo) {
-        try {
-          const photoUrl = await uploadAvatar(data.user.id, photo);
-          await supabase.from('profiles').update({ photo_url: photoUrl }).eq('id', data.user.id);
-        } catch {
-          // Avatar is optional; registration still succeeded.
-        }
+      // Upload the (required) profile photo
+      const photoPath = await uploadAvatar(data.user.id, photo!);
+      await supabase
+        .from('profiles')
+        .update({ photo_url: photoPath, status: 'approved' })
+        .eq('id', data.user.id);
+
+      // With email confirmation OFF, Supabase returns a live session.
+      // We're already signed in — drop the user straight into the app.
+      if (data.session) {
+        router.replace('/(tabs)/home');
+        return;
       }
 
-      setSubmitted(true);
+      // Fallback (shouldn't happen now): ask them to sign in manually.
+      setToast({ type: 'success', message: 'Account created. Signing you in…' });
+      setTimeout(() => router.replace('/(auth)/login'), 800);
     } catch (err) {
       setToast({ type: 'error', message: describeError(err) });
     } finally {
@@ -120,54 +126,30 @@ export default function RegisterScreen() {
     }
   };
 
-  if (submitted) {
-    return (
-      <SafeAreaView style={styles.safeArea}>
-        <View style={styles.successCard}>
-          <View style={styles.successCheck}>
-            <Check size={40} color={colors.background} strokeWidth={3} />
-          </View>
-          <Text style={styles.successTitle}>Registration received</Text>
-          <Text style={styles.successBody}>
-            Two quick steps before you&apos;re in:
-          </Text>
-          <View style={styles.steps}>
-            <Text style={styles.step}>1. Confirm your email address using the link we just sent to {email}.</Text>
-            <Text style={styles.step}>2. A coach will review your application and approve your membership.</Text>
-          </View>
-          <Text style={styles.successBody}>
-            You&apos;ll receive an email and a push notification when you&apos;re approved.
-          </Text>
-          <Button
-            title="Back to sign in"
-            onPress={() => router.replace('/(auth)/login')}
-            fullWidth
-          />
-        </View>
-      </SafeAreaView>
-    );
-  }
-
   return (
     <SafeAreaView style={styles.safeArea}>
       {toast && <Toast message={toast.message} type={toast.type} onDismiss={() => setToast(null)} />}
+
       <KeyboardAvoidingView
         style={styles.flex}
-        behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
+      >
         <ScrollView
           contentContainerStyle={styles.scroll}
           keyboardShouldPersistTaps="handled"
-          showsVerticalScrollIndicator={false}>
+          showsVerticalScrollIndicator={false}
+        >
           <View style={styles.header}>
             <Text style={styles.title}>Join the club</Text>
-            <Text style={styles.subtitle}>Register for coach-reviewed membership.</Text>
+            <Text style={styles.subtitle}>Create your account to start training.</Text>
           </View>
 
           <Pressable
             style={styles.photoPicker}
-            onPress={handlePickPhoto}
+            onPress={pickPhoto}
             accessibilityRole="button"
-            accessibilityLabel="Add profile photo">
+            accessibilityLabel="Add profile photo"
+          >
             {photo ? (
               <>
                 <View style={styles.photoPreview}>
@@ -180,16 +162,53 @@ export default function RegisterScreen() {
                 <View style={styles.photoPlaceholder}>
                   <ImagePlus size={28} color={colors.muted} />
                 </View>
-                <Text style={styles.photoHint}>Add a profile photo (optional)</Text>
+                <Text style={styles.photoHint}>Add a profile photo</Text>
               </>
             )}
           </Pressable>
+          {!!errors.photo && <Text style={styles.errorText}>{errors.photo}</Text>}
 
           <View style={styles.form}>
-            <TextField label="Full name" value={fullName} onChangeText={setFullName} autoComplete="name" textContentType="name" error={errors.fullName} required />
-            <TextField label="Phone" value={phone} onChangeText={setPhone} keyboardType="phone-pad" autoComplete="tel" textContentType="telephoneNumber" error={errors.phone} required />
-            <TextField label="Email" value={email} onChangeText={setEmail} autoCapitalize="none" autoComplete="email" keyboardType="email-address" textContentType="emailAddress" error={errors.email} required />
-            <TextField label="Password" value={password} onChangeText={setPassword} secureTextEntry autoComplete="new-password" textContentType="newPassword" error={errors.password} required />
+            <TextField
+              label="Full name"
+              value={fullName}
+              onChangeText={setFullName}
+              autoComplete="name"
+              textContentType="name"
+              error={errors.fullName}
+              required
+            />
+            <TextField
+              label="Phone"
+              value={phone}
+              onChangeText={setPhone}
+              keyboardType="phone-pad"
+              autoComplete="tel"
+              textContentType="telephoneNumber"
+              error={errors.phone}
+              required
+            />
+            <TextField
+              label="Email"
+              value={email}
+              onChangeText={setEmail}
+              autoCapitalize="none"
+              autoComplete="email"
+              keyboardType="email-address"
+              textContentType="emailAddress"
+              error={errors.email}
+              required
+            />
+            <TextField
+              label="Password (8+ characters)"
+              value={password}
+              onChangeText={setPassword}
+              secureTextEntry
+              autoComplete="new-password"
+              textContentType="newPassword"
+              error={errors.password}
+              required
+            />
 
             <View style={styles.minorRow}>
               <View style={styles.minorTextBlock}>
@@ -201,35 +220,46 @@ export default function RegisterScreen() {
                 onValueChange={setIsMinor}
                 trackColor={{ false: colors.panel, true: colors.primary }}
                 thumbColor={colors.text}
-                accessibilityLabel="Minor account toggle"
               />
             </View>
 
             {isMinor && (
               <View style={styles.guardianBox}>
-                <TextField label="Parent / guardian name" value={guardianName} onChangeText={setGuardianName} autoComplete="name" error={errors.guardianName} required />
-                <TextField label="Parent / guardian phone" value={guardianPhone} onChangeText={setGuardianPhone} keyboardType="phone-pad" autoComplete="tel" error={errors.guardianPhone} required />
+                <TextField
+                  label="Parent / guardian name"
+                  value={guardianName}
+                  onChangeText={setGuardianName}
+                  error={errors.guardianName}
+                  required
+                />
+                <TextField
+                  label="Parent / guardian phone"
+                  value={guardianPhone}
+                  onChangeText={setGuardianPhone}
+                  keyboardType="phone-pad"
+                  error={errors.guardianPhone}
+                  required
+                />
               </View>
             )}
 
             <Pressable
               style={styles.termsRow}
               onPress={() => {
-                setTermsAccepted((value) => !value);
+                setTermsAccepted((v) => !v);
                 setErrors((prev) => ({ ...prev, terms: '' }));
               }}
               accessibilityRole="checkbox"
               accessibilityState={{ checked: termsAccepted }}
-              accessibilityLabel="Accept the club terms">
+            >
               <View style={[styles.termsBox, termsAccepted && styles.termsBoxChecked]}>
                 {termsAccepted && <Check size={16} color={colors.background} strokeWidth={3} />}
               </View>
               <Text style={styles.termsText}>
-                I understand this is a coach-controlled club community and my membership depends on
-                coach approval.
+                I accept the club rules and understand membership is coach-managed.
               </Text>
             </Pressable>
-            {!!errors.terms && <Text style={styles.termsError}>{errors.terms}</Text>}
+            {!!errors.terms && <Text style={styles.errorText}>{errors.terms}</Text>}
 
             <Button
               title="Create account"
@@ -280,12 +310,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  photoPreview: {
-    width: 96,
-    height: 96,
-    borderRadius: 48,
-    overflow: 'hidden',
-  },
+  photoPreview: { width: 96, height: 96, borderRadius: 48, overflow: 'hidden' },
   photoImage: { width: 96, height: 96 },
   photoHint: { color: colors.muted, fontSize: fontSize.caption },
   form: { gap: spacing.md },
@@ -303,7 +328,12 @@ const styles = StyleSheet.create({
   minorTitle: { color: colors.text, fontSize: fontSize.body, fontWeight: '700' },
   minorSubtitle: { color: colors.muted, fontSize: fontSize.caption },
   guardianBox: { gap: spacing.md },
-  termsRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md, paddingVertical: spacing.sm },
+  termsRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.md,
+    paddingVertical: spacing.sm,
+  },
   termsBox: {
     width: 24,
     height: 24,
@@ -318,45 +348,23 @@ const styles = StyleSheet.create({
     backgroundColor: colors.secondary,
     borderColor: colors.secondary,
   },
-  termsText: { flex: 1, color: colors.muted, fontSize: fontSize.caption, lineHeight: 18 },
-  termsError: { color: colors.error, fontSize: fontSize.small },
-  footerRow: { flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: spacing.xs },
-  footerText: { color: colors.muted, fontSize: fontSize.body },
-  footerLink: { color: colors.secondary, fontSize: fontSize.body, fontWeight: '700' },
-  successCard: {
+  termsText: {
     flex: 1,
-    justifyContent: 'center',
-    paddingHorizontal: spacing.lg,
-    gap: spacing.md,
-  },
-  successCheck: {
-    width: 72,
-    height: 72,
-    borderRadius: 36,
-    backgroundColor: colors.success,
-    alignItems: 'center',
-    justifyContent: 'center',
-    alignSelf: 'center',
-  },
-  successTitle: {
-    color: colors.text,
-    fontSize: fontSize.h1,
-    fontWeight: '800',
-    textAlign: 'center',
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-    marginTop: spacing.md,
-  },
-  successBody: {
     color: colors.muted,
-    fontSize: fontSize.body,
-    lineHeight: 22,
-    textAlign: 'center',
+    fontSize: fontSize.caption,
+    lineHeight: 18,
   },
-  steps: { gap: spacing.sm, marginVertical: spacing.sm },
-  step: {
-    color: colors.text,
+  errorText: { color: colors.error, fontSize: fontSize.small, textAlign: 'center' },
+  footerRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: spacing.xs,
+  },
+  footerText: { color: colors.muted, fontSize: fontSize.body },
+  footerLink: {
+    color: colors.secondary,
     fontSize: fontSize.body,
-    lineHeight: 22,
+    fontWeight: '700',
   },
 });
